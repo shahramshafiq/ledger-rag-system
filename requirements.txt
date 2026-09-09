@@ -1,1 +1,4 @@
 sec-edgar-downloader
+psycopg[binary]
+pgvector
+beautifulsoup4
