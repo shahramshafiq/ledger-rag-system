@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.pyc
+.env
+
+# raw downloaded filings are large and regenerable via download_filings.py, not source
+data/filings/
