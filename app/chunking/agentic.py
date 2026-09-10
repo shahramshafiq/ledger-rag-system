@@ -31,8 +31,7 @@ def parse_json_response(content):
         content = content.strip("`").removeprefix("json").strip()
     return json.loads(content)
 
-
-def group_paragraphs_agentically(paragraphs, heading):
+def group_paragraphs_agentically(paragraphs, heading, cost_tracker=None):
     if len(paragraphs) <= 1:
         return [0]
 
@@ -43,6 +42,9 @@ def group_paragraphs_agentically(paragraphs, heading):
     try:
         response = llm.invoke(prompt)
         result = parse_json_response(response.content)
+        if cost_tracker is not None:
+            cost_tracker["input_tokens"] += response.usage_metadata["input_tokens"]
+            cost_tracker["output_tokens"] += response.usage_metadata["output_tokens"]
         starts = sorted(set(result["chunk_starts"]) | {0})
         return [s for s in starts if 0 <= s < len(paragraphs)]
     except Exception:
@@ -50,7 +52,7 @@ def group_paragraphs_agentically(paragraphs, heading):
         return list(range(len(paragraphs)))
 
 
-def chunk_agentic(sections, metadata, max_tokens=512):
+def chunk_agentic(sections, metadata, max_tokens=512, cost_tracker=None):
     chunks = []
 
     for section in sections:
@@ -60,7 +62,7 @@ def chunk_agentic(sections, metadata, max_tokens=512):
         def flush_run():
             if not paragraph_run:
                 return
-            starts = group_paragraphs_agentically(paragraph_run, heading)
+            starts = group_paragraphs_agentically(paragraph_run, heading, cost_tracker)
             for i, start in enumerate(starts):
                 end = starts[i + 1] if i + 1 < len(starts) else len(paragraph_run)
                 group_text = " ".join(paragraph_run[start:end])

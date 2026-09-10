@@ -1,7 +1,10 @@
 from app.services.ingestion_service import ingest_filing
 from app.chunking.agentic import chunk_agentic
+from app.utils.costs import calculate_input_cost, calculate_output_cost, calculate_total_cost
+from app.config import settings
 
 COLLECTION = "ledger_chunks_agentic"
+cost_tracker = {"input_tokens": 0, "output_tokens": 0}
 
 filings = [
     (r"data\filings\Apple\2022\sec-edgar-filings\AAPL\10-K\0000320193-22-000108\primary-document.html", "Apple", "AAPL", "FY2022"),
@@ -15,5 +18,15 @@ filings = [
 ]
 
 for path, company, ticker, fiscal_year in filings:
-    count = ingest_filing(path, company, ticker, fiscal_year, chunk_agentic, collection_name=COLLECTION)
+    count = ingest_filing(
+        path, company, ticker, fiscal_year,
+        lambda sections, metadata: chunk_agentic(sections, metadata, cost_tracker=cost_tracker),
+        collection_name=COLLECTION,
+    )
     print(f"{company} {fiscal_year}: {count} chunks")
+
+ingestion_cost = calculate_total_cost(
+    calculate_input_cost(cost_tracker["input_tokens"], settings.input_price),
+    calculate_output_cost(cost_tracker["output_tokens"], settings.output_price),
+)
+print(f"\nTotal agentic chunking cost: ${ingestion_cost:.4f} ({cost_tracker['input_tokens']} input / {cost_tracker['output_tokens']} output tokens)")
