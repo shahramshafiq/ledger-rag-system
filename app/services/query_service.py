@@ -1,3 +1,5 @@
+import time
+
 from langchain_openai import ChatOpenAI
 
 from app.vectorstore.store import get_vector_store
@@ -12,6 +14,8 @@ Question: {question}"""
 
 
 def answer_question(question, k=5):
+    start = time.time()
+
     store = get_vector_store()
     results = store.similarity_search(question, k=k)
 
@@ -27,8 +31,15 @@ def answer_question(question, k=5):
             "company": doc.metadata.get("company"),
             "fiscal_year": doc.metadata.get("fiscal_year"),
             "is_table": doc.metadata.get("is_table"),
+            "text": doc.page_content,
         }
         for doc in results
     ]
 
-    return {"answer": response.content, "chunks_used": chunks_used}
+    return {
+        "answer": response.content,
+        "chunks_used": chunks_used,
+        "input_tokens": response.usage_metadata["input_tokens"],
+        "output_tokens": response.usage_metadata["output_tokens"],
+        "latency": time.time() - start,
+    }
