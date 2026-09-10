@@ -2,3 +2,4 @@ sec-edgar-downloader
 psycopg[binary]
 pgvector
 beautifulsoup4
+tiktoken
