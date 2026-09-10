@@ -1,65 +1,4 @@
-import csv
-import json
-import logging
-import sys
-from pathlib import Path
-
-from langchain_openai import ChatOpenAI
-
-from app.config import settings
-from app.services.query_service import answer_question
-from app.utils.costs import calculate_input_cost, calculate_output_cost, calculate_total_cost
-from app.utils.logging import setup_logging
-
-logger = logging.getLogger(__name__)
-
-GOLDEN_DATASET_PATH = Path("data/golden_dataset.json")
-RESULTS_PATH = Path("eval/results.csv")
-
-TICKER = {"Apple": "AAPL", "Microsoft": "MSFT", "Walmart": "WMT", "JPMorgan": "JPM"}
-
-JUDGE_PROMPT = """You are grading a RAG system's answer to a question.
-
-Question: {question}
-Expected answer: {expected_answer}
-Generated answer: {generated_answer}
-Retrieved context: {context}
-
-Respond with only strict JSON, nothing else: {{"correct": true or false, "faithful": true or false}}
-"correct" means the generated answer matches the expected answer's meaning.
-"faithful" means every claim in the generated answer is actually supported by the retrieved context, not invented."""
-
-
-def check_recall(source_document, chunks_used):
-    if not source_document:
-        return None
-    expected_pairs = []
-    for part in source_document.split(" + "):
-        pieces = part.split("_")
-        if len(pieces) < 2:
-            continue
-        expected_pairs.append((pieces[0], pieces[1]))
-    if not expected_pairs:
-        return None
-    for chunk in chunks_used:
-        pair = (TICKER.get(chunk.get("company")), chunk.get("fiscal_year"))
-        if pair in expected_pairs:
-            return True
-    return False
-
-
-def judge_answer(question, expected_answer, generated_answer, context):
-    llm = ChatOpenAI(model=settings.openai_model, temperature=0, api_key=settings.openai_api_key)
-    prompt = JUDGE_PROMPT.format(
-        question=question, expected_answer=expected_answer,
-        generated_answer=generated_answer, context=context[:4000],
-    )
-    response = llm.invoke(prompt)
-    verdict = json.loads(response.content)
-    return verdict["correct"], verdict["faithful"]
-
-
-def run_harness(run_label):
+def run_harness(run_label, collection_name="ledger_chunks"):
     setup_logging()
     with open(GOLDEN_DATASET_PATH, encoding="utf-8") as f:
         golden = json.load(f)
@@ -73,7 +12,7 @@ def run_harness(run_label):
 
         for q in golden["questions"]:
             try:
-                result = answer_question(q["question"])
+                result = answer_question(q["question"], collection_name=collection_name)
                 recall = check_recall(q.get("source_document"), result["chunks_used"])
                 context = "\n\n".join(c["text"] for c in result["chunks_used"])
                 correct, faithful = judge_answer(q["question"], q["expected_answer"], result["answer"], context)
@@ -92,4 +31,5 @@ def run_harness(run_label):
 
 if __name__ == "__main__":
     label = sys.argv[1] if len(sys.argv) > 1 else "baseline"
-    run_harness(label)
+    collection = sys.argv[2] if len(sys.argv) > 2 else "ledger_chunks"
+    run_harness(label, collection_name=collection)

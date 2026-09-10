@@ -8,12 +8,12 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
-def get_vector_store():
+def get_vector_store(collection_name="ledger_chunks"):
     try:
         embeddings = OpenAIEmbeddings(model=settings.embedding_model, api_key=settings.openai_api_key)
         return PGVector(
             embeddings=embeddings,
-            collection_name="ledger_chunks",
+            collection_name=collection_name,
             connection=settings.database_url,
             engine_args={"connect_args": {"connect_timeout": 5}},
         )

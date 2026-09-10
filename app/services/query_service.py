@@ -16,9 +16,9 @@ Context:
 Question: {question}"""
 
 
-def answer_question(question, k=5):
+def answer_question(question, k=5, collection_name="ledger_chunks"):
     start = time.time()
-    store = get_vector_store()
+    store = get_vector_store(collection_name)
     results = store.similarity_search(question, k=k)
 
     context = "\n\n".join(doc.page_content for doc in results)
@@ -28,7 +28,7 @@ def answer_question(question, k=5):
     response = llm.invoke(prompt)
 
     latency = time.time() - start
-    logger.info(f"Answered {question!r} in {latency:.2f}s using {len(results)} chunks")
+    logger.info(f"Answered {question!r} in {latency:.2f}s using {len(results)} chunks from '{collection_name}'")
 
     chunks_used = [
         {
