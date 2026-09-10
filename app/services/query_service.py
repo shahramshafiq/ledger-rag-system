@@ -5,6 +5,7 @@ from langchain_openai import ChatOpenAI
 
 from app.vectorstore.store import get_vector_store
 from app.reranker.reranker import rerank
+from app.retrieval.metadata_filter import extract_filter
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -17,15 +18,17 @@ Context:
 Question: {question}"""
 
 
-def answer_question(question, k=5, collection_name="ledger_chunks", use_reranker=False, retrieve_k=20):
+def answer_question(question, k=5, collection_name="ledger_chunks", use_reranker=False,
+                     retrieve_k=20, use_metadata_filter=False):
     start = time.time()
     store = get_vector_store(collection_name)
+    search_filter = extract_filter(question) if use_metadata_filter else None
 
     if use_reranker:
-        candidates = store.similarity_search(question, k=retrieve_k)
+        candidates = store.similarity_search(question, k=retrieve_k, filter=search_filter)
         results = rerank(question, candidates, top_k=k)
     else:
-        results = store.similarity_search(question, k=k)
+        results = store.similarity_search(question, k=k, filter=search_filter)
 
     context = "\n\n".join(doc.page_content for doc in results)
     prompt = PROMPT_TEMPLATE.format(context=context, question=question)
@@ -34,7 +37,8 @@ def answer_question(question, k=5, collection_name="ledger_chunks", use_reranker
     response = llm.invoke(prompt)
 
     latency = time.time() - start
-    logger.info(f"Answered {question!r} in {latency:.2f}s using {len(results)} chunks from '{collection_name}' (reranker={use_reranker})")
+    logger.info(f"Answered {question!r} in {latency:.2f}s using {len(results)} chunks "
+                f"from '{collection_name}' (reranker={use_reranker}, filter={search_filter})")
 
     chunks_used = [
         {
