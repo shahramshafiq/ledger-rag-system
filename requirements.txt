@@ -3,3 +3,5 @@ psycopg[binary]
 pgvector
 beautifulsoup4
 tiktoken
+langchain-postgres
+langchain-openai
