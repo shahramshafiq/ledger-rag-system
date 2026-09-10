@@ -58,7 +58,8 @@ def judge_answer(question, expected_answer, generated_answer, context):
     verdict = json.loads(response.content)
     return verdict["correct"], verdict["faithful"]
 
-def run_harness(run_label, collection_name="ledger_chunks", use_reranker=False, use_metadata_filter=False):
+def run_harness(run_label, collection_name="ledger_chunks", use_reranker=False,
+                 use_metadata_filter=False, use_hybrid=False):
     setup_logging()
     with open(GOLDEN_DATASET_PATH, encoding="utf-8") as f:
         golden = json.load(f)
@@ -73,7 +74,8 @@ def run_harness(run_label, collection_name="ledger_chunks", use_reranker=False, 
         for q in golden["questions"]:
             try:
                 result = answer_question(q["question"], collection_name=collection_name,
-                                          use_reranker=use_reranker, use_metadata_filter=use_metadata_filter)
+                                          use_reranker=use_reranker, use_metadata_filter=use_metadata_filter,
+                                          use_hybrid=use_hybrid)
                 recall = check_recall(q.get("source_document"), result["chunks_used"])
                 context = "\n\n".join(c["text"] for c in result["chunks_used"])
                 correct, faithful = judge_answer(q["question"], q["expected_answer"], result["answer"], context)
@@ -95,4 +97,6 @@ if __name__ == "__main__":
     collection = sys.argv[2] if len(sys.argv) > 2 else "ledger_chunks"
     use_reranker = "--rerank" in sys.argv
     use_metadata_filter = "--filter" in sys.argv
-    run_harness(label, collection_name=collection, use_reranker=use_reranker, use_metadata_filter=use_metadata_filter)
+    use_hybrid = "--hybrid" in sys.argv
+    run_harness(label, collection_name=collection, use_reranker=use_reranker,
+                use_metadata_filter=use_metadata_filter, use_hybrid=use_hybrid)
