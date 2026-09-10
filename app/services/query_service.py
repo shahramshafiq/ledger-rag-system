@@ -4,6 +4,7 @@ import time
 from langchain_openai import ChatOpenAI
 
 from app.vectorstore.store import get_vector_store
+from app.reranker.reranker import rerank
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -16,10 +17,15 @@ Context:
 Question: {question}"""
 
 
-def answer_question(question, k=5, collection_name="ledger_chunks"):
+def answer_question(question, k=5, collection_name="ledger_chunks", use_reranker=False, retrieve_k=20):
     start = time.time()
     store = get_vector_store(collection_name)
-    results = store.similarity_search(question, k=k)
+
+    if use_reranker:
+        candidates = store.similarity_search(question, k=retrieve_k)
+        results = rerank(question, candidates, top_k=k)
+    else:
+        results = store.similarity_search(question, k=k)
 
     context = "\n\n".join(doc.page_content for doc in results)
     prompt = PROMPT_TEMPLATE.format(context=context, question=question)
@@ -28,7 +34,7 @@ def answer_question(question, k=5, collection_name="ledger_chunks"):
     response = llm.invoke(prompt)
 
     latency = time.time() - start
-    logger.info(f"Answered {question!r} in {latency:.2f}s using {len(results)} chunks from '{collection_name}'")
+    logger.info(f"Answered {question!r} in {latency:.2f}s using {len(results)} chunks from '{collection_name}' (reranker={use_reranker})")
 
     chunks_used = [
         {
