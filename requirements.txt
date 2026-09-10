@@ -5,3 +5,4 @@ beautifulsoup4
 tiktoken
 langchain-postgres
 langchain-openai
+pydantic-settings
