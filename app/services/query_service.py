@@ -1,9 +1,12 @@
+import logging
 import time
 
 from langchain_openai import ChatOpenAI
 
 from app.vectorstore.store import get_vector_store
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 PROMPT_TEMPLATE = """Answer the question using only the context below. If the context doesn't contain the answer, say you don't know.
 
@@ -15,15 +18,17 @@ Question: {question}"""
 
 def answer_question(question, k=5):
     start = time.time()
-
     store = get_vector_store()
     results = store.similarity_search(question, k=k)
 
     context = "\n\n".join(doc.page_content for doc in results)
     prompt = PROMPT_TEMPLATE.format(context=context, question=question)
 
-    llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0, api_key=settings.openai_api_key)
+    llm = ChatOpenAI(model=settings.openai_model, temperature=0, api_key=settings.openai_api_key)
     response = llm.invoke(prompt)
+
+    latency = time.time() - start
+    logger.info(f"Answered {question!r} in {latency:.2f}s using {len(results)} chunks")
 
     chunks_used = [
         {
@@ -41,5 +46,5 @@ def answer_question(question, k=5):
         "chunks_used": chunks_used,
         "input_tokens": response.usage_metadata["input_tokens"],
         "output_tokens": response.usage_metadata["output_tokens"],
-        "latency": time.time() - start,
+        "latency": latency,
     }
