@@ -1,7 +1,8 @@
 import re
 from bs4 import BeautifulSoup
 
-HEADING_PATTERN = re.compile(r"^Item\s+\d+[A-Za-z]?\.")
+HEADING_PATTERN = re.compile(r"^Item\s+\d+[A-Za-z]?\.", re.IGNORECASE)
+FONT_SIZE_PATTERN = re.compile(r"font-size:(\d+)pt")
 
 
 def clean_text(text):
@@ -13,8 +14,8 @@ def parse_filing(html_path):
     with open(html_path, encoding="utf-8") as f:
         soup = BeautifulSoup(f, "html.parser")
 
-    tables = extract_tables(soup)
     heading_texts = find_headings(soup)
+    tables = extract_tables(soup, heading_texts)
     flat_text = clean_text(soup.get_text(separator=" "))
 
     sections = split_into_sections(flat_text, heading_texts)
@@ -24,9 +25,13 @@ def parse_filing(html_path):
     return sections
 
 
-def extract_tables(soup):
+def extract_tables(soup, heading_texts):
     tables = {}
     for i, table_tag in enumerate(soup.find_all("table")):
+        table_text = clean_text(table_tag.get_text())
+        if any(table_text.startswith(h) for h in heading_texts):
+            continue  # this "table" is really just a heading laid out in table cells, leave it as normal text
+
         rows = []
         for tr in table_tag.find_all("tr"):
             cells = [cell.get_text(strip=True) for cell in tr.find_all(["td", "th"])]
@@ -39,11 +44,14 @@ def extract_tables(soup):
 
 def find_headings(soup):
     headings = []
-    for span in soup.find_all("span"):
-        style = span.get("style", "")
-        if "font-weight:700" not in style:
+    for tag in soup.find_all(style=True):
+        style = tag.get("style", "")
+        is_bold = "font-weight:700" in style or "font-weight:bold" in style
+        size_match = FONT_SIZE_PATTERN.search(style)
+        is_large = bool(size_match) and int(size_match.group(1)) >= 11
+        if not (is_bold or is_large):
             continue
-        text = clean_text(span.get_text())
+        text = clean_text(tag.get_text())
         if HEADING_PATTERN.match(text):
             headings.append(text)
     return headings

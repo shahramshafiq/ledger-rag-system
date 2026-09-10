@@ -8,6 +8,9 @@ def ingest_filing(html_path, company, ticker, fiscal_year):
     metadata = {"company": company, "ticker": ticker, "fiscal_year": fiscal_year}
     chunks = chunk_structure_aware(sections, metadata)
 
+    if not chunks:
+        raise ValueError(f"No chunks produced for {company} {fiscal_year}, check the parser against this file")
+
     store = get_vector_store()
     store.add_documents(chunks)
 
