@@ -37,6 +37,15 @@ Rewrite the search query to more closely match how this fact would actually be p
 financial statements (e.g. "total operating income", specific line-item names) rather than conversational
 phrasing. Return only the rewritten search query text, nothing else, no quotes."""
 
+DECOMPOSE_PROMPT = """This question involves multiple companies: {companies}
+
+Question: {question}
+
+Write a standalone, single-company version of this question for each company listed, phrased the way you
+would ask about that one company alone (e.g. "What was Apple's operating margin for fiscal year 2023?"),
+not mentioning any of the other companies. Respond with strict JSON only, no markdown, one key per company:
+{{"CompanyName1": "standalone question for company 1", "CompanyName2": "standalone question for company 2"}}"""
+
 GENERATE_PROMPT = """Answer the question using only the context below.
 
 Important: financial statements often report multiple similar-looking line items for the same broad concept.
@@ -66,6 +75,7 @@ class RAGState(TypedDict):
     answer: str
     input_tokens: int
     output_tokens: int
+    company_queries: dict
 
 
 def get_llm():
@@ -88,15 +98,29 @@ def parse_json(content):
 
 
 def make_company_specific_query(query, company, known_companies):
-    # a shared query naming multiple companies (e.g. "Apple ... Microsoft ...") dilutes the
-    # embedding's focus when searching for just one of them. Strip every known company name out
-    # of the query, then put the one company we're actually searching for back at the front, so
-    # each company's sub-search is genuinely about that company alone.
+    # fallback only, used if real decomposition fails: strip every known company name out of the
+    # shared query, then put the one company we're searching for back at the front
     stripped = query
     for name in known_companies:
         stripped = re.sub(re.escape(name), "", stripped, flags=re.IGNORECASE)
     stripped = re.sub(r"\s+", " ", stripped).strip()
     return f"{company} {stripped}".strip()
+
+
+def decompose_query(original_question, companies):
+    # a shared query, even with other companies' names stripped out, still carries the phrasing
+    # and framing of the original comparison question. Generating one genuinely independent,
+    # single-company question per company (instead of surgery on a shared string) is what actually
+    # fixes that, this is real query decomposition, not a text-cleanup trick.
+    prompt = DECOMPOSE_PROMPT.format(companies=", ".join(companies), question=original_question)
+    try:
+        response = get_llm().invoke(prompt)
+        result = parse_json(response.content)
+        tokens = (response.usage_metadata["input_tokens"], response.usage_metadata["output_tokens"])
+        return result, tokens
+    except Exception:
+        logger.exception("Query decomposition failed, falling back to name-stripped query")
+        return {}, (0, 0)
 
 
 def retrieve_node(state):
@@ -113,14 +137,28 @@ def retrieve_node(state):
     if not companies:
         companies = known_companies
 
+    extra_input_tokens = 0
+    extra_output_tokens = 0
+    company_queries = state.get("company_queries") or {}
+
     if len(companies) > 1:
-        per_company_k = max(5, 20 // len(companies))
+        # decompose once per question (cached in state across rewrite rounds), not on every call
+        if not company_queries:
+            company_queries, (in_tok, out_tok) = decompose_query(state["original_question"], companies)
+            extra_input_tokens += in_tok
+            extra_output_tokens += out_tok
+
+        # give each company the same full depth a single-company search would get, rather than
+        # dividing one shared budget across them, splitting the budget fixed the "one company wins
+        # by volume" problem but reintroduced a "not enough depth for any one company" problem
         new_docs = []
         for company in companies:
             company_filter = dict(search_filter) if search_filter else {}
             company_filter["company"] = {"$in": [company]}
-            company_query = make_company_specific_query(state["search_query"], company, known_companies)
-            new_docs.extend(store.similarity_search(company_query, k=per_company_k, filter=company_filter))
+            company_query = company_queries.get(company) or make_company_specific_query(
+                state["search_query"], company, known_companies
+            )
+            new_docs.extend(store.similarity_search(company_query, k=20, filter=company_filter))
     else:
         new_docs = store.similarity_search(state["search_query"], k=20, filter=search_filter)
 
@@ -132,7 +170,12 @@ def retrieve_node(state):
             merged.append(d)
             seen.add(d.page_content)
 
-    return {"documents": merged}
+    return {
+        "documents": merged,
+        "company_queries": company_queries,
+        "input_tokens": state.get("input_tokens", 0) + extra_input_tokens,
+        "output_tokens": state.get("output_tokens", 0) + extra_output_tokens,
+    }
 
 
 def grade_node(state):
@@ -211,6 +254,7 @@ def answer_question_corrective(question):
         "answer": "",
         "input_tokens": 0,
         "output_tokens": 0,
+        "company_queries": {},
     })
 
     latency = time.time() - start
