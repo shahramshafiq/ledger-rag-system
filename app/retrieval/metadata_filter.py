@@ -26,7 +26,12 @@ def get_known_companies(collection_name):
 def extract_filter(question, collection_name="ledger_chunks"):
     known_companies = get_known_companies(collection_name)
     companies = [c for c in known_companies if c in question]
-    years = sorted(set(f"FY{y}" for y in re.findall(r"20\d{2}", question)))
+
+    # a year mentioned right after "not" (e.g. "fiscal year 2022, not fiscal year 2023")
+    # is being explicitly excluded, not requested, so it must not end up in the filter
+    excluded_years = set(re.findall(r"not\s+(?:fiscal\s+year\s+)?(20\d{2})", question, re.IGNORECASE))
+    all_years = re.findall(r"20\d{2}", question)
+    years = sorted(set(f"FY{y}" for y in all_years if y not in excluded_years))
 
     filters = {}
     if companies:

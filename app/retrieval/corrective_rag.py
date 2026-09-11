@@ -8,7 +8,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 
 from app.config import settings
-from app.retrieval.metadata_filter import extract_filter
+from app.retrieval.metadata_filter import extract_filter, get_known_companies
 from app.vectorstore.store import get_vector_store
 
 logger = logging.getLogger(__name__)
@@ -89,7 +89,25 @@ def parse_json(content):
 def retrieve_node(state):
     store = get_vector_store("ledger_chunks")
     search_filter = extract_filter(state["original_question"], "ledger_chunks")
-    new_docs = store.similarity_search(state["search_query"], k=20, filter=search_filter)
+
+    # when a question spans multiple companies (named explicitly, e.g. "Apple's and Microsoft's",
+    # or implicitly, e.g. a broad question naming none, which means "all of them"), searching once
+    # against the whole corpus lets whichever company simply has the most chunks (JPMorgan has 5-8x
+    # more than the others) win most of the slots by volume, not relevance. Searching separately per
+    # company and merging gives every company a fair, equal-sized share of the results instead.
+    companies = search_filter.get("company", {}).get("$in") if search_filter else None
+    if not companies:
+        companies = get_known_companies("ledger_chunks")
+
+    if len(companies) > 1:
+        per_company_k = max(5, 20 // len(companies))
+        new_docs = []
+        for company in companies:
+            company_filter = dict(search_filter) if search_filter else {}
+            company_filter["company"] = {"$in": [company]}
+            new_docs.extend(store.similarity_search(state["search_query"], k=per_company_k, filter=company_filter))
+    else:
+        new_docs = store.similarity_search(state["search_query"], k=20, filter=search_filter)
 
     existing = state.get("documents", [])
     seen = {d.page_content for d in existing}
