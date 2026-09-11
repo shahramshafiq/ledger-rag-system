@@ -37,6 +37,12 @@ def extract_tables(soup, heading_texts):
             cells = [cell.get_text(strip=True) for cell in tr.find_all(["td", "th"])]
             if any(cells):
                 rows.append(cells)
+
+        if len(rows) < 2:
+            continue  # a single-row "table" is layout markup (e.g. a page-footer banner reused as a
+            # table for visual alignment), not real data, a real financial table always compares
+            # multiple line items or periods across rows, leave it as normal text instead of dropping it
+
         tables[i] = rows
         table_tag.replace_with(f"[[TABLE_{i}]]")
     return tables

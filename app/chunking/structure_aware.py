@@ -15,7 +15,7 @@ def count_tokens(text):
     return len(encoder.encode(text))
 
 
-MIN_TOKENS = 15
+MIN_TOKENS = 20
 
 
 def add_text_chunk(chunks, text, heading, metadata):
