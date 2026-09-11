@@ -71,6 +71,14 @@ def get_llm():
     return ChatOpenAI(model=settings.openai_model, temperature=0, api_key=settings.openai_api_key)
 
 
+def format_context(documents):
+    parts = []
+    for doc in documents:
+        label = f"[{doc.metadata.get('company')}, {doc.metadata.get('fiscal_year')}, {doc.metadata.get('section')}]"
+        parts.append(f"{label}\n{doc.page_content}")
+    return "\n\n".join(parts)
+
+
 def parse_json(content):
     content = content.strip()
     if content.startswith("```"):
@@ -80,8 +88,8 @@ def parse_json(content):
 
 def retrieve_node(state):
     store = get_vector_store("ledger_chunks")
-    search_filter = extract_filter(state["original_question"])
-    new_docs = store.similarity_search(state["search_query"], k=10, filter=search_filter)
+    search_filter = extract_filter(state["original_question"], "ledger_chunks")
+    new_docs = store.similarity_search(state["search_query"], k=20, filter=search_filter)
 
     existing = state.get("documents", [])
     seen = {d.page_content for d in existing}
@@ -98,7 +106,7 @@ def grade_node(state):
     if state["attempts"] >= MAX_ATTEMPTS:
         return {"sufficient": True}
 
-    context = "\n\n".join(d.page_content for d in state["documents"])
+    context = format_context(state["documents"])
     prompt = GRADE_PROMPT.format(question=state["original_question"], context=context[:4000])
 
     try:
@@ -133,7 +141,7 @@ def rewrite_node(state):
 
 
 def generate_node(state):
-    context = "\n\n".join(d.page_content for d in state["documents"])
+    context = format_context(state["documents"])
     prompt = GENERATE_PROMPT.format(context=context, question=state["original_question"])
     response = get_llm().invoke(prompt)
     return {

@@ -36,7 +36,7 @@ def answer_question(question, k=5, collection_name="ledger_chunks", use_reranker
                      retrieve_k=20, use_metadata_filter=False, use_hybrid=False):
     start = time.time()
     store = get_vector_store(collection_name)
-    search_filter = extract_filter(question) if use_metadata_filter else None
+    search_filter = extract_filter(question, collection_name) if use_metadata_filter else None
 
     if use_hybrid:
         vector_results = store.similarity_search(question, k=retrieve_k, filter=search_filter)
@@ -48,7 +48,10 @@ def answer_question(question, k=5, collection_name="ledger_chunks", use_reranker
     else:
         results = store.similarity_search(question, k=k, filter=search_filter)
 
-    context = "\n\n".join(doc.page_content for doc in results)
+    context = "\n\n".join(
+        f"[{doc.metadata.get('company')}, {doc.metadata.get('fiscal_year')}, {doc.metadata.get('section')}]\n{doc.page_content}"
+        for doc in results
+    )
     prompt = PROMPT_TEMPLATE.format(context=context, question=question)
 
     llm = ChatOpenAI(model=settings.openai_model, temperature=0, api_key=settings.openai_api_key)
