@@ -22,12 +22,17 @@ TICKER = {"Apple": "AAPL", "Microsoft": "MSFT", "Walmart": "WMT", "JPMorgan": "J
 JUDGE_PROMPT = """You are grading a RAG system's answer to a question.
 
 Question: {question}
+Question category: {category}
 Expected answer: {expected_answer}
 Generated answer: {generated_answer}
 Retrieved context: {context}
 
 Respond with only strict JSON, nothing else: {{"correct": true or false, "faithful": true or false}}
-"correct" means the generated answer matches the expected answer's meaning.
+"correct" means the generated answer matches the expected answer's meaning. For a "broad" category question,
+the expected answer is a reference set of themes/points, not the one exact required scope or phrasing: mark
+the generated answer correct if it substantively captures the same core themes or points, even if organized
+differently, worded differently, or more comprehensive. Only mark a broad-category answer incorrect if it
+misses the substance entirely or states something factually wrong.
 "faithful" means every claim in the generated answer is actually supported by the retrieved context, not invented."""
 
 
@@ -49,10 +54,10 @@ def check_recall(source_document, chunks_used):
     return False
 
 
-def judge_answer(question, expected_answer, generated_answer, context):
+def judge_answer(question, category, expected_answer, generated_answer, context):
     llm = ChatOpenAI(model=settings.openai_model, temperature=0, api_key=settings.openai_api_key)
     prompt = JUDGE_PROMPT.format(
-        question=question, expected_answer=expected_answer,
+        question=question, category=category, expected_answer=expected_answer,
         generated_answer=generated_answer, context=context[:4000],
     )
     response = llm.invoke(prompt)
@@ -85,7 +90,7 @@ def run_harness(run_label, collection_name="ledger_chunks", use_reranker=False,
                                               use_hybrid=use_hybrid)
                 recall = check_recall(q.get("source_document"), result["chunks_used"])
                 context = "\n\n".join(c["text"] for c in result["chunks_used"])
-                correct, faithful = judge_answer(q["question"], q["expected_answer"], result["answer"], context)
+                correct, faithful = judge_answer(q["question"], q["category"], q["expected_answer"], result["answer"], context)
                 cost = calculate_total_cost(
                     calculate_input_cost(result["input_tokens"], settings.input_price),
                     calculate_output_cost(result["output_tokens"], settings.output_price),
