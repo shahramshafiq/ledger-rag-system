@@ -1,6 +1,5 @@
 import json
 import logging
-import re
 import time
 from typing import List, TypedDict
 
@@ -37,14 +36,14 @@ Rewrite the search query to more closely match how this fact would actually be p
 financial statements (e.g. "total operating income", specific line-item names) rather than conversational
 phrasing. Return only the rewritten search query text, nothing else, no quotes."""
 
-DECOMPOSE_PROMPT = """This question involves multiple companies: {companies}
+DECOMPOSE_PROMPT = """This question requires information from multiple distinct sources: {labels}
 
 Question: {question}
 
-Write a standalone, single-company version of this question for each company listed, phrased the way you
-would ask about that one company alone (e.g. "What was Apple's operating margin for fiscal year 2023?"),
-not mentioning any of the other companies. Respond with strict JSON only, no markdown, one key per company:
-{{"CompanyName1": "standalone question for company 1", "CompanyName2": "standalone question for company 2"}}"""
+Write a standalone version of this question for each source listed, focused only on what that one source
+alone would need to answer its part (e.g. if a source is "Apple FY2022", write something like "What was
+Apple's net income for fiscal year 2022?"). Respond with strict JSON only, no markdown, one key per source,
+using the exact source labels given: {{"label1": "standalone question for source 1", "label2": "standalone question for source 2"}}"""
 
 GENERATE_PROMPT = """Answer the question using only the context below.
 
@@ -97,30 +96,39 @@ def parse_json(content):
     return json.loads(content)
 
 
-def make_company_specific_query(query, company, known_companies):
-    # fallback only, used if real decomposition fails: strip every known company name out of the
-    # shared query, then put the one company we're searching for back at the front
-    stripped = query
-    for name in known_companies:
-        stripped = re.sub(re.escape(name), "", stripped, flags=re.IGNORECASE)
-    stripped = re.sub(r"\s+", " ", stripped).strip()
-    return f"{company} {stripped}".strip()
-
-
-def decompose_query(original_question, companies):
-    # a shared query, even with other companies' names stripped out, still carries the phrasing
-    # and framing of the original comparison question. Generating one genuinely independent,
-    # single-company question per company (instead of surgery on a shared string) is what actually
-    # fixes that, this is real query decomposition, not a text-cleanup trick.
-    prompt = DECOMPOSE_PROMPT.format(companies=", ".join(companies), question=original_question)
+def decompose_query(original_question, labels):
+    # a shared query dilutes focus whenever the question actually needs two distinct slices of
+    # data at once, whether that's two companies or two years of the same company. Generating one
+    # genuinely independent, standalone question per source is what fixes that, this is real query
+    # decomposition, not text surgery on a shared string.
+    prompt = DECOMPOSE_PROMPT.format(labels=", ".join(labels), question=original_question)
     try:
         response = get_llm().invoke(prompt)
         result = parse_json(response.content)
         tokens = (response.usage_metadata["input_tokens"], response.usage_metadata["output_tokens"])
         return result, tokens
     except Exception:
-        logger.exception("Query decomposition failed, falling back to name-stripped query")
+        logger.exception("Query decomposition failed, falling back to the shared query")
         return {}, (0, 0)
+
+
+def build_entities(companies, years):
+    # an "entity" is one independent slice of data the question needs a fair, undiluted shot at
+    # retrieving. If multiple companies are involved, each company is its own entity (regardless
+    # of how many years). If only one company is involved but multiple years are, each year is its
+    # own entity instead. (This corpus never needs the full company x year cross product, e.g. no
+    # question asks "compare Apple 2022 vs Microsoft 2023", so this simpler either/or is enough.)
+    if len(companies) > 1:
+        return [
+            (company, {"company": {"$in": [company]}, **({"fiscal_year": {"$in": years}} if years else {})})
+            for company in companies
+        ]
+    if years and len(years) > 1:
+        return [
+            (f"{companies[0]} {year}", {"company": {"$in": companies}, "fiscal_year": {"$in": [year]}})
+            for year in years
+        ]
+    return None
 
 
 def retrieve_node(state):
@@ -128,37 +136,38 @@ def retrieve_node(state):
     search_filter = extract_filter(state["original_question"], "ledger_chunks")
 
     # when a question spans multiple companies (named explicitly, e.g. "Apple's and Microsoft's",
-    # or implicitly, e.g. a broad question naming none, which means "all of them"), searching once
-    # against the whole corpus lets whichever company simply has the most chunks (JPMorgan has 5-8x
-    # more than the others) win most of the slots by volume, not relevance. Searching separately per
-    # company and merging gives every company a fair, equal-sized share of the results instead.
+    # or implicitly, e.g. a broad question naming none, which means "all of them"), or multiple
+    # years of the same company, searching once against the whole filtered set lets whichever
+    # entity simply has the most chunks (JPMorgan has 5-8x more than the others) or embeds most
+    # favorably win most of the slots by volume, not relevance. Searching separately per entity and
+    # merging gives every entity a fair, equal-sized, full-depth share of the results instead.
     known_companies = get_known_companies("ledger_chunks")
     companies = search_filter.get("company", {}).get("$in") if search_filter else None
+    years = search_filter.get("fiscal_year", {}).get("$in") if search_filter else None
     if not companies:
         companies = known_companies
 
+    entities = build_entities(companies, years)
+
     extra_input_tokens = 0
     extra_output_tokens = 0
-    company_queries = state.get("company_queries") or {}
+    entity_queries = state.get("company_queries") or {}
 
-    if len(companies) > 1:
+    if entities:
+        labels = [label for label, _ in entities]
         # decompose once per question (cached in state across rewrite rounds), not on every call
-        if not company_queries:
-            company_queries, (in_tok, out_tok) = decompose_query(state["original_question"], companies)
+        if not entity_queries:
+            entity_queries, (in_tok, out_tok) = decompose_query(state["original_question"], labels)
             extra_input_tokens += in_tok
             extra_output_tokens += out_tok
 
-        # give each company the same full depth a single-company search would get, rather than
-        # dividing one shared budget across them, splitting the budget fixed the "one company wins
-        # by volume" problem but reintroduced a "not enough depth for any one company" problem
+        # give each entity the same full depth a single-entity search would get, rather than
+        # dividing one shared budget across them, splitting the budget fixed the "one entity wins
+        # by volume" problem but reintroduced a "not enough depth for any one entity" problem
         new_docs = []
-        for company in companies:
-            company_filter = dict(search_filter) if search_filter else {}
-            company_filter["company"] = {"$in": [company]}
-            company_query = company_queries.get(company) or make_company_specific_query(
-                state["search_query"], company, known_companies
-            )
-            new_docs.extend(store.similarity_search(company_query, k=20, filter=company_filter))
+        for label, entity_filter in entities:
+            entity_query = entity_queries.get(label) or state["search_query"]
+            new_docs.extend(store.similarity_search(entity_query, k=20, filter=entity_filter))
     else:
         new_docs = store.similarity_search(state["search_query"], k=20, filter=search_filter)
 
@@ -172,7 +181,7 @@ def retrieve_node(state):
 
     return {
         "documents": merged,
-        "company_queries": company_queries,
+        "company_queries": entity_queries,
         "input_tokens": state.get("input_tokens", 0) + extra_input_tokens,
         "output_tokens": state.get("output_tokens", 0) + extra_output_tokens,
     }
