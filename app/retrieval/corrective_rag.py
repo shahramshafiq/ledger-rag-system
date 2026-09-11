@@ -42,8 +42,12 @@ Question: {question}
 
 Write a standalone version of this question for each source listed, focused only on what that one source
 alone would need to answer its part (e.g. if a source is "Apple FY2022", write something like "What was
-Apple's net income for fiscal year 2022?"). Respond with strict JSON only, no markdown, one key per source,
-using the exact source labels given: {{"label1": "standalone question for source 1", "label2": "standalone question for source 2"}}"""
+Apple's net income for fiscal year 2022?"). Phrase each question using the literal line-item terms a
+financial statement reports (e.g. "operating income", "net sales", "net income") rather than a computed
+ratio name like "margin", since filings report raw dollar figures and not every company's filing uses
+"margin" language even when it discloses the underlying numbers. Respond with strict JSON only, no markdown,
+one key per source, using the exact source labels given:
+{{"label1": "standalone question for source 1", "label2": "standalone question for source 2"}}"""
 
 GENERATE_PROMPT = """Answer the question using only the context below.
 
@@ -163,11 +167,14 @@ def retrieve_node(state):
 
         # give each entity the same full depth a single-entity search would get, rather than
         # dividing one shared budget across them, splitting the budget fixed the "one entity wins
-        # by volume" problem but reintroduced a "not enough depth for any one entity" problem
+        # by volume" problem but reintroduced a "not enough depth for any one entity" problem.
+        # k=30 not 20: a large multi-year financial-statement table (many line items, three years
+        # of columns) embeds less sharply toward a single-metric question than shorter prose does,
+        # so the right table can rank just past 20 even when it's the only one with the real figure.
         new_docs = []
         for label, entity_filter in entities:
             entity_query = entity_queries.get(label) or state["search_query"]
-            new_docs.extend(store.similarity_search(entity_query, k=20, filter=entity_filter))
+            new_docs.extend(store.similarity_search(entity_query, k=30, filter=entity_filter))
     else:
         new_docs = store.similarity_search(state["search_query"], k=20, filter=search_filter)
 
