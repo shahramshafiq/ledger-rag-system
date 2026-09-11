@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import time
 from typing import List, TypedDict
 
@@ -86,6 +87,18 @@ def parse_json(content):
     return json.loads(content)
 
 
+def make_company_specific_query(query, company, known_companies):
+    # a shared query naming multiple companies (e.g. "Apple ... Microsoft ...") dilutes the
+    # embedding's focus when searching for just one of them. Strip every known company name out
+    # of the query, then put the one company we're actually searching for back at the front, so
+    # each company's sub-search is genuinely about that company alone.
+    stripped = query
+    for name in known_companies:
+        stripped = re.sub(re.escape(name), "", stripped, flags=re.IGNORECASE)
+    stripped = re.sub(r"\s+", " ", stripped).strip()
+    return f"{company} {stripped}".strip()
+
+
 def retrieve_node(state):
     store = get_vector_store("ledger_chunks")
     search_filter = extract_filter(state["original_question"], "ledger_chunks")
@@ -95,9 +108,10 @@ def retrieve_node(state):
     # against the whole corpus lets whichever company simply has the most chunks (JPMorgan has 5-8x
     # more than the others) win most of the slots by volume, not relevance. Searching separately per
     # company and merging gives every company a fair, equal-sized share of the results instead.
+    known_companies = get_known_companies("ledger_chunks")
     companies = search_filter.get("company", {}).get("$in") if search_filter else None
     if not companies:
-        companies = get_known_companies("ledger_chunks")
+        companies = known_companies
 
     if len(companies) > 1:
         per_company_k = max(5, 20 // len(companies))
@@ -105,7 +119,8 @@ def retrieve_node(state):
         for company in companies:
             company_filter = dict(search_filter) if search_filter else {}
             company_filter["company"] = {"$in": [company]}
-            new_docs.extend(store.similarity_search(state["search_query"], k=per_company_k, filter=company_filter))
+            company_query = make_company_specific_query(state["search_query"], company, known_companies)
+            new_docs.extend(store.similarity_search(company_query, k=per_company_k, filter=company_filter))
     else:
         new_docs = store.similarity_search(state["search_query"], k=20, filter=search_filter)
 

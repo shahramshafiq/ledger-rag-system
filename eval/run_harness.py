@@ -56,7 +56,10 @@ def judge_answer(question, expected_answer, generated_answer, context):
         generated_answer=generated_answer, context=context[:4000],
     )
     response = llm.invoke(prompt)
-    verdict = json.loads(response.content)
+    content = response.content.strip()
+    if content.startswith("```"):
+        content = content.strip("`").removeprefix("json").strip()
+    verdict = json.loads(content)
     return verdict["correct"], verdict["faithful"]
 
 def run_harness(run_label, collection_name="ledger_chunks", use_reranker=False,
