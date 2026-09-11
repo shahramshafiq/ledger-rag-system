@@ -5,3 +5,6 @@ __pycache__/
 
 # raw downloaded filings are large and regenerable via download_filings.py, not source
 data/filings/
+
+# files uploaded through POST /documents are runtime artifacts, not source
+data/uploads/

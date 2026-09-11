@@ -8,3 +8,6 @@ langchain-openai
 pydantic-settings
 sentence-transformers
 langgraph
+fastapi
+uvicorn[standard]
+python-multipart
