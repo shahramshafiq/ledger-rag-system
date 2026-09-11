@@ -8,6 +8,7 @@ from langchain_openai import ChatOpenAI
 
 from app.config import settings
 from app.services.query_service import answer_question
+from app.retrieval.corrective_rag import answer_question_corrective
 from app.utils.costs import calculate_input_cost, calculate_output_cost, calculate_total_cost
 from app.utils.logging import setup_logging
 
@@ -59,7 +60,7 @@ def judge_answer(question, expected_answer, generated_answer, context):
     return verdict["correct"], verdict["faithful"]
 
 def run_harness(run_label, collection_name="ledger_chunks", use_reranker=False,
-                 use_metadata_filter=False, use_hybrid=False):
+                 use_metadata_filter=False, use_hybrid=False, use_corrective=False):
     setup_logging()
     with open(GOLDEN_DATASET_PATH, encoding="utf-8") as f:
         golden = json.load(f)
@@ -73,9 +74,12 @@ def run_harness(run_label, collection_name="ledger_chunks", use_reranker=False,
 
         for q in golden["questions"]:
             try:
-                result = answer_question(q["question"], collection_name=collection_name,
-                                          use_reranker=use_reranker, use_metadata_filter=use_metadata_filter,
-                                          use_hybrid=use_hybrid)
+                if use_corrective:
+                    result = answer_question_corrective(q["question"])
+                else:
+                    result = answer_question(q["question"], collection_name=collection_name,
+                                              use_reranker=use_reranker, use_metadata_filter=use_metadata_filter,
+                                              use_hybrid=use_hybrid)
                 recall = check_recall(q.get("source_document"), result["chunks_used"])
                 context = "\n\n".join(c["text"] for c in result["chunks_used"])
                 correct, faithful = judge_answer(q["question"], q["expected_answer"], result["answer"], context)
@@ -98,5 +102,6 @@ if __name__ == "__main__":
     use_reranker = "--rerank" in sys.argv
     use_metadata_filter = "--filter" in sys.argv
     use_hybrid = "--hybrid" in sys.argv
+    use_corrective = "--corrective" in sys.argv
     run_harness(label, collection_name=collection, use_reranker=use_reranker,
-                use_metadata_filter=use_metadata_filter, use_hybrid=use_hybrid)
+                use_metadata_filter=use_metadata_filter, use_hybrid=use_hybrid, use_corrective=use_corrective)

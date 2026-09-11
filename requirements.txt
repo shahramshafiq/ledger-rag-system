@@ -7,3 +7,4 @@ langchain-postgres
 langchain-openai
 pydantic-settings
 sentence-transformers
+langgraph

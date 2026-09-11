@@ -35,3 +35,19 @@ confidence-gated subset of queries rather than every request. On the evidence so
 configuration does not justify its cost on this corpus and should not be combined with future runs
 without further tuning (e.g. a financial-domain-tuned reranker) or a narrower application (only
 cross_document-style questions, where it actually helped).
+
+## Hybrid search / BM25 (Phase 4)
+Initial run (`hybrid`, using plainto_tsquery directly): 12/25, no improvement on table_value (1/5,
+unchanged), slight regression on direct_lookup (3/5 vs 4/5 under metadata filtering alone).
+Root cause investigated directly: plainto_tsquery AND-joins every word of the question (13 terms for a
+typical question), so conversational phrasing like "according to... what was..." required an impossible
+full match against terse table content, returning zero keyword results for most questions, hybrid search
+was silently degenerating to vector-only plus noise. Fixed the AND/OR bug and retested at the SQL level:
+still didn't surface the correct table reliably, because plain Postgres ts_rank lacks true IDF weighting,
+common boilerplate words (page headers, "fiscal year", "2023") that appear on nearly every chunk keep
+outranking the genuinely distinguishing terms ("operating", "margin"). This is a structural limitation of
+using Postgres full-text search as a BM25 stand-in, not a configuration bug, a real BM25 implementation
+(rank-bm25, Elasticsearch, OpenSearch) would likely fix it but is disproportionate to build for an
+8-document corpus. Conclusion: hybrid search via plain Postgres full-text search does not justify further
+tuning effort on this corpus; the full 25-question harness was not rerun against the corrected query
+since the SQL-level test already showed the core problem persists.
