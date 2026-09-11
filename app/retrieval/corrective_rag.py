@@ -20,7 +20,12 @@ GRADE_PROMPT = """Question: {question}
 Retrieved context:
 {context}
 
-Does this context contain enough information to answer the question? Respond with strict JSON only, no markdown: {{"sufficient": true or false}}"""
+Does this context contain enough information to answer the question, even if the answer requires simple
+extraction or calculation from numbers already present? Respond "sufficient" if the needed fact or figure
+is present anywhere in the context, even if not perfectly labeled. Only respond "insufficient" if the
+specific information needed is genuinely absent from the context.
+
+Respond with strict JSON only, no markdown: {{"sufficient": true or false}}"""
 
 REWRITE_PROMPT = """This search query did not retrieve enough information to answer the question below.
 
@@ -31,7 +36,19 @@ Rewrite the search query to more closely match how this fact would actually be p
 financial statements (e.g. "total operating income", specific line-item names) rather than conversational
 phrasing. Return only the rewritten search query text, nothing else, no quotes."""
 
-GENERATE_PROMPT = """Answer the question using only the context below. If the context doesn't contain the answer, say you don't know.
+GENERATE_PROMPT = """Answer the question using only the context below.
+
+Important: financial statements often report multiple similar-looking line items for the same broad concept.
+When this happens, prefer the headline consolidated figure a company reports as its main result, not a
+component or before-adjustment figure. Specifically:
+- Prefer "net income attributable to [company]" over "consolidated net income" (the latter may include
+  amounts attributable to noncontrolling interests, a smaller adjustment).
+- Prefer "total operating income" over "segment operating income" (segment figures are a
+  before-corporate-expense component of the total, not the final reported number).
+- When a table has multiple years as columns, double-check you are reading the value from the correct
+  year's column before answering.
+
+If the context doesn't contain the answer, say you don't know.
 
 Context:
 {context}
@@ -64,8 +81,17 @@ def parse_json(content):
 def retrieve_node(state):
     store = get_vector_store("ledger_chunks")
     search_filter = extract_filter(state["original_question"])
-    docs = store.similarity_search(state["search_query"], k=5, filter=search_filter)
-    return {"documents": docs}
+    new_docs = store.similarity_search(state["search_query"], k=10, filter=search_filter)
+
+    existing = state.get("documents", [])
+    seen = {d.page_content for d in existing}
+    merged = list(existing)
+    for d in new_docs:
+        if d.page_content not in seen:
+            merged.append(d)
+            seen.add(d.page_content)
+
+    return {"documents": merged}
 
 
 def grade_node(state):

@@ -12,7 +12,19 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-PROMPT_TEMPLATE = """Answer the question using only the context below. If the context doesn't contain the answer, say you don't know.
+PROMPT_TEMPLATE = """Answer the question using only the context below.
+
+Important: financial statements often report multiple similar-looking line items for the same broad concept.
+When this happens, prefer the headline consolidated figure a company reports as its main result, not a
+component or before-adjustment figure. Specifically:
+- Prefer "net income attributable to [company]" over "consolidated net income" (the latter may include
+  amounts attributable to noncontrolling interests, a smaller adjustment).
+- Prefer "total operating income" over "segment operating income" (segment figures are a
+  before-corporate-expense component of the total, not the final reported number).
+- When a table has multiple years as columns, double-check you are reading the value from the correct
+  year's column before answering.
+
+If the context doesn't contain the answer, say you don't know.
 
 Context:
 {context}
