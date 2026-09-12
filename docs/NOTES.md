@@ -140,21 +140,42 @@ answers before deciding whether a failure was a system bug or a grading/data pro
 
 ## Final results across all techniques (25-question golden dataset)
 
-| Run | Correct | Faithful | Avg latency | Total cost |
-|---|---|---|---|---|
-| Baseline (structure-aware, plain vector, k=5) | 11/25 | 21/25 | 2.66s | $0.0174 |
-| Agentic chunking | 12/25 | 22/25 | 2.40s | $0.0173 |
-| Reranker | 10/25 | 23/25 | 7.55s | $0.0189 |
-| Hybrid (BM25 + vector) | 12/25 | 21/25 | 2.54s | $0.0151 |
-| Metadata filtering | 13/25 | 21/25 | 2.23s | $0.0149 |
-| **Corrective RAG (final)** | **25/25** | **25/25** | 8.6s | $0.177 |
+| Run | Correct | Faithful | Avg latency | p95 latency | Total cost |
+|---|---|---|---|---|---|
+| Baseline (structure-aware, plain vector, k=5) | 11/25 | 21/25 | 2.66s | 4.58s | $0.0174 |
+| Agentic chunking | 12/25 | 22/25 | 2.40s | 4.34s | $0.0173 |
+| Reranker | 10/25 | 23/25 | 7.55s | 8.21s | $0.0189 |
+| Hybrid (BM25 + vector) | 12/25 | 21/25 | 2.54s | 3.76s | $0.0151 |
+| Metadata filtering | 13/25 | 21/25 | 2.23s | 4.81s | $0.0149 |
+| **Corrective RAG (final)** | **25/25** | **25/25** | 8.61s | 12.54s | $0.177 |
+
+The reranker's p95 (8.21s) sits close to its own average (7.55s), meaning it's consistently slow, not
+occasionally slow, confirming this isn't a fixable long-tail issue. Corrective RAG's gap between average
+(8.61s) and p95 (12.54s) is wider, driven mostly by multi-entity questions that need extra decomposition
+and retrieval rounds (Q21's four-company synthesis alone took 41.7s, the single slowest question in the
+set). In a genuinely latency-constrained product, the mitigation would be caching the decomposition step
+per question-shape and/or running per-entity retrieval concurrently instead of sequentially, neither
+implemented here since nothing in the current corpus size demanded it.
+
+**Abstention accuracy (Phase 5's refusal-rate requirement)**: of the 4 unanswerable questions, all 4 were
+correctly refused (100% correct-refusal rate). Of the 21 answerable questions, 0 were incorrectly refused
+or otherwise marked wrong (0% incorrect-refusal rate) in the final run. Reporting only the first number
+would hide whether the system achieves this by being appropriately selective or simply by refusing
+everything, it does not: it answers every answerable question and declines every unanswerable one.
 
 Corrective RAG costs roughly 10x more per question than the simple techniques (multiple LLM calls per
 question: grading, occasional rewriting/decomposition, generation, vs. one call for plain retrieval) and
 is meaningfully slower. That tradeoff is the real, honest finding of this phase: correctness on a
 financial-filing corpus this heterogeneous required paying for a multi-step pipeline, not a single clever
-retrieval trick. Still unbuilt: recursive and hierarchical chunking strategies (agentic and structure-aware
-are the only two of the supervisor's four-strategy list actually implemented), the FastAPI routes (`POST
-/documents`, `POST /query`) specified by the project, and Phase 5's remaining pieces beyond the CRAG
-mechanism already built: claim-level citation enforcement, an active prompt-injection test, and reporting
-false-refusal vs. false-answer rates separately for the unanswerable category.
+retrieval trick.
+
+**Deliberately out of scope**: recursive and hierarchical chunking strategies (agentic and structure-aware
+were judged sufficient to answer the chunking-strategy comparison question; adding two more strategies was
+cut for time), and testing 2-3 chunk sizes against the winning strategy. Both are explicit deviations from
+the written spec, made consciously, not gaps discovered late.
+
+Built since the above: the FastAPI routes (`POST /documents` with SSE ingestion progress, `POST /query`),
+manually verified end to end via Postman. Still open from Phase 5's requirements beyond the CRAG grading
+mechanism already in place: the grader currently forces itself to "sufficient" after 2 failed rewrite
+attempts rather than returning an explicit insufficient-evidence response (a real deviation from spec,
+not yet fixed), claim-level citation enforcement, and an active prompt-injection test.
