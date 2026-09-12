@@ -58,7 +58,7 @@ def judge_answer(question, category, expected_answer, generated_answer, context)
     llm = ChatOpenAI(model=settings.openai_model, temperature=0, api_key=settings.openai_api_key)
     prompt = JUDGE_PROMPT.format(
         question=question, category=category, expected_answer=expected_answer,
-        generated_answer=generated_answer, context=context[:4000],
+        generated_answer=generated_answer, context=context,
     )
     response = llm.invoke(prompt)
     content = response.content.strip()
@@ -89,7 +89,12 @@ def run_harness(run_label, collection_name="ledger_chunks", use_reranker=False,
                                               use_reranker=use_reranker, use_metadata_filter=use_metadata_filter,
                                               use_hybrid=use_hybrid)
                 recall = check_recall(q.get("source_document"), result["chunks_used"])
-                context = "\n\n".join(c["text"] for c in result["chunks_used"])
+                # numbered to match the citation ids the answer itself cites (e.g. "[6]"), and no
+                # longer truncated: it used to be context[:4000], the same bug just fixed in
+                # grade_node, a flat character cutoff that only covers the first 1-2 of what can be
+                # 20-80 chunks, so the judge was marking real, correctly-cited claims unfaithful
+                # simply because the cited chunk's text was never within its own truncated view.
+                context = "\n\n".join(f"[{i}] {c['text']}" for i, c in enumerate(result["chunks_used"], start=1))
                 correct, faithful = judge_answer(q["question"], q["category"], q["expected_answer"], result["answer"], context)
                 cost = calculate_total_cost(
                     calculate_input_cost(result["input_tokens"], settings.input_price),

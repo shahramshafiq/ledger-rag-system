@@ -264,14 +264,45 @@ against the live attack each time, not by guessing:
 
 Reran the full harness after this change too: **25/25, still holding.**
 
-**A new, minor measurement gap surfaced, not yet fixed**: several questions now show `faithful=False`
-where the answer is still `correct=True` (e.g. Q02, Q04, Q08). Likely cause, not yet confirmed: answers
-now carry citation markers like `[6][16][19]`, but the harness's faithfulness judge is built the plain
-chunk text without those ids, a format mismatch between what corrective_rag.py shows the model and what
-run_harness.py shows the judge, not necessarily a real faithfulness problem. Worth a follow-up pass:
-thread the same numbered evidence format into the judge's context, or judge citations separately.
+## Phase 5, part 4: the faithful=False gap, root-caused and fixed, plus its real cost
 
-**Status now**: real abstention, working claim-level citations (confirmed live, not just unit-tested,
-e.g. "Microsoft's net income for fiscal year 2023 was $72,361 million [6][16][19]"), and an injection
-defense verified against both attack variants, all against a fresh 25/25 harness run. The one open item
-is the faithful=False measurement gap above.
+The `faithful=False` pattern from part 3 (correct answers marked unfaithful) had an initial hypothesis:
+citation markers like `[6][16][19]` in the answer with no matching numbering in the judge's own context.
+Tested directly by rebuilding the judge's context with matching `[N]` numbers and re-judging the exact
+same live answer: **faithful was still False. The hypothesis was wrong.** Verified before acting on it,
+which is the only reason this didn't become a wasted fix.
+
+Root cause, found by checking whether the cited chunks were even present in what the judge was shown:
+`judge_answer()` truncated its context to `context[:4000]`, the identical bug class just fixed in
+`grade_node`, in a different function. For the same live answer, chunks `[6]`, `[16]`, `[19]` sit at
+character positions 10,693 / 27,207 / 31,517 in a 34,184-character context, all past the judge's own
+cutoff. The judge was being asked to verify claims it was never shown the evidence for. Fixed the same
+way: `judge_answer()` now receives the full context, numbered to match the citation ids the answer
+actually uses. Verified directly on the same case: `faithful` flipped to `True` with zero other changes.
+
+**Real cost of this fix, found by re-running the full harness twice more, not by guessing**: removing
+truncation from both grading and judging means every question now sends substantially more tokens per
+request. Against the temporary replacement key (a 200,000 tokens/minute ceiling), this caused 12 rate-limit
+(429) errors in one run and 1 unrecoverable failure after retries were exhausted (different questions
+failed on different runs, Q19 once, Q24 another time, purely a function of which large multi-company
+question happened to land inside a saturated one-minute window). The harness's existing per-question
+try/except caught every one correctly and recorded it as `ERROR` without losing the rest of the run,
+exactly as designed. This is a genuine, disclosed tradeoff of the fix, not a bug: correctness required
+seeing the full context, and seeing the full context costs more tokens. Whether this remains a practical
+problem depends on the real key's actual rate limit, not measured here since only a temporary key was
+available.
+
+**Also found, not caused by this fix**: Q16 and Q17 (both cross-document net-income/margin comparisons)
+flipped between correct and incorrect across repeated runs with zero code changes in between. Traced
+directly: Q17's generated answer was byte-for-byte identical both times (still using "consolidated net
+income" rather than "net income attributable to Walmart," the same real ambiguity between two genuine
+reported figures that was first found and addressed for Q03 much earlier in this project). What changed
+was the judge's verdict on that same answer, not the answer itself, LLM-as-judge non-determinism at a
+genuinely close call, made more visible now that the judge sees enough context to actually engage with
+the ambiguity, not something the fix introduced.
+
+**Status now**: real abstention, working claim-level citations, an injection defense verified against
+both attack variants, and a judge that can now actually see what it's evaluating, all confirmed against
+live runs, not assumed. Two honestly-disclosed, understood-but-unresolved items remain: token cost on a
+rate-limited key, and inherent judge non-determinism on 1-2 genuinely ambiguous questions, neither of
+which is a logic bug in this session's changes.
