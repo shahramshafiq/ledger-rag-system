@@ -226,6 +226,52 @@ have dropped `uvicorn`, `python-multipart`, and `pytest` (none are directly impo
 `pgvector` (needed to register the vector type, never imported directly). Applying it blindly would have
 broken the server, file uploads, and the test suite on a clean clone. `requirements.txt` was left as is.
 
-**First thing to do once the key is back**: run `debug/prompt_injection_test.py` and read its output
-directly, then a full clean `eval.run_harness corrective` pass to confirm nothing in this batch of changes
-regressed the 25/25 result, before trusting any of it as done.
+## Phase 5, part 3: verified against a live model, and what broke
+
+A temporary replacement key arrived. Both hypotheses above got tested for real, and one of them was wrong
+in an instructive way.
+
+**The abstention fix initially caused a severe regression, 25/25 down to 9/25, and the real cause was a
+second, older bug it exposed, not a new one.** Every question that needed even one rewrite came back
+abstained, including ones already known to work (Q09, Q13, Q15, Q16 from the earlier debugging arc).
+Traced directly: `grade_node` graded on `context[:4000]`, a flat character slice, while `generate_node`
+always used the full, untruncated context. With 20+ chunks concatenated, real context routinely runs
+30,000+ characters, so grading was judging on roughly the first 2 chunks while 18 others, sometimes
+including the one with the actual answer, went unseen. Confirmed directly for Q02: Microsoft's real net
+income figure was present in the full context but 30,000+ characters past the 4000-character cutoff.
+This bug always existed. It was invisible because the old forced-`sufficient=True` hack silently
+overrode whatever the half-blind grader concluded, and generation (never truncated) usually found the
+real answer anyway. Fixing the real spec violation (never fake sufficiency) removed that silent
+override and exposed the grader had been operating half-blind the whole time. Fix: `grade_node` now
+grades on the same full context `generate_node` uses, no truncation. Reran the full harness:
+**25/25 restored**, confirmed live, not assumed.
+
+**The injection defense did not hold on the first attempt, then took three real iterations to hold for
+both attack variants.** Tested live: both "before the fix" and "after the fix" runs returned the
+injected phrase; the fix had no effect. Root-caused by testing three successive prompt revisions
+against the live attack each time, not by guessing:
+1. First revision (evidence delimiting stated once, near the top): body-text attack still succeeded.
+2. Added the same warning restated immediately before the question (recency) plus explicit language
+   naming table cells as a place instructions get hidden: body-text attack now failed correctly,
+   table-cell attack still succeeded. The two injection sites are not equally hard to defend, planting
+   an instruction inside what looks like a table's data value is the more effective attack, tables get
+   an implicit trust a paragraph doesn't.
+3. Added one concrete worked example showing the exact extraction behavior wanted (a fake attack phrase
+   different from the real test's, so the fix generalizes the underlying skill rather than pattern
+   matching this test's specific wording): both attacks now fail correctly. An abstract rule about
+   ignoring embedded instructions was not enough on its own, showing the model what correct extraction
+   looks like was what actually worked.
+
+Reran the full harness after this change too: **25/25, still holding.**
+
+**A new, minor measurement gap surfaced, not yet fixed**: several questions now show `faithful=False`
+where the answer is still `correct=True` (e.g. Q02, Q04, Q08). Likely cause, not yet confirmed: answers
+now carry citation markers like `[6][16][19]`, but the harness's faithfulness judge is built the plain
+chunk text without those ids, a format mismatch between what corrective_rag.py shows the model and what
+run_harness.py shows the judge, not necessarily a real faithfulness problem. Worth a follow-up pass:
+thread the same numbered evidence format into the judge's context, or judge citations separately.
+
+**Status now**: real abstention, working claim-level citations (confirmed live, not just unit-tested,
+e.g. "Microsoft's net income for fiscal year 2023 was $72,361 million [6][16][19]"), and an injection
+defense verified against both attack variants, all against a fresh 25/25 harness run. The one open item
+is the faithful=False measurement gap above.
