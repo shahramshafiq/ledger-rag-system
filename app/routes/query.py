@@ -21,6 +21,8 @@ def post_query(body: QueryRequest):
     return {
         "question": body.question,
         "answer": result["answer"],
+        "abstained": result["abstained"],
+        "invalid_citations": result["invalid_citations"],
         "chunks_used": result["chunks_used"],
         "latency_seconds": round(result["latency"], 2),
         "input_tokens": result["input_tokens"],
