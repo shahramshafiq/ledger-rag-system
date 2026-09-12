@@ -370,7 +370,10 @@ def answer_question_corrective(question):
         {
             "section": doc.metadata.get("section"),
             "company": doc.metadata.get("company"),
+            "ticker": doc.metadata.get("ticker"),
             "fiscal_year": doc.metadata.get("fiscal_year"),
+            "form_type": doc.metadata.get("form_type"),
+            "page": doc.metadata.get("page"),
             "is_table": doc.metadata.get("is_table"),
             "text": doc.page_content,
         }

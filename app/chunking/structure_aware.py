@@ -6,8 +6,8 @@ import tiktoken
 
 encoder = tiktoken.get_encoding("cl100k_base")
 
-def make_chunk(text, heading, metadata, is_table):
-    chunk_metadata = {"section": heading, "is_table": is_table}
+def make_chunk(text, heading, metadata, is_table, page=None):
+    chunk_metadata = {"section": heading, "is_table": is_table, "page": page}
     chunk_metadata.update(metadata)
     return Document(page_content=text, metadata=chunk_metadata)
 
@@ -18,7 +18,7 @@ def count_tokens(text):
 MIN_TOKENS = 20
 
 
-def add_text_chunk(chunks, text, heading, metadata):
+def add_text_chunk(chunks, text, heading, metadata, page=None):
     # page footers ("Apple Inc. | 2022 Form 10-K | 58") and empty-section stubs ("RESERVED 33")
     # end up as their own tiny paragraph chunks whenever they sit alone between two tables or
     # section boundaries. Their embeddings are dominated by the company/year tokens they contain,
@@ -26,7 +26,7 @@ def add_text_chunk(chunks, text, heading, metadata):
     # Tables are exempt and always kept regardless of size, so no real figure is lost by dropping these.
     if count_tokens(text) < MIN_TOKENS:
         return
-    chunks.append(make_chunk(text, heading, metadata, is_table=False))
+    chunks.append(make_chunk(text, heading, metadata, is_table=False, page=page))
 
 
 def table_to_text(rows):
@@ -74,34 +74,38 @@ def chunk_structure_aware(sections, metadata, max_tokens=512):
         heading = section["heading"]
         buffer_parts = []
         buffer_tokens = 0
+        buffer_page = None  # page of the first paragraph in the buffer, a merged chunk is tagged
+                             # with where it starts, not every page it might span
 
         for element in section["elements"]:
             if element["type"] == "table":
                 if buffer_parts:
-                    add_text_chunk(chunks, " ".join(buffer_parts), heading, metadata)
-                    buffer_parts, buffer_tokens = [], 0
+                    add_text_chunk(chunks, " ".join(buffer_parts), heading, metadata, page=buffer_page)
+                    buffer_parts, buffer_tokens, buffer_page = [], 0, None
                 table_text = table_to_text(element["rows"])
-                chunks.append(make_chunk(table_text, heading, metadata, is_table=True))
+                chunks.append(make_chunk(table_text, heading, metadata, is_table=True, page=element.get("page")))
                 continue
 
             para_tokens = count_tokens(element["text"])
 
             if para_tokens > max_tokens:
                 if buffer_parts:
-                    add_text_chunk(chunks, " ".join(buffer_parts), heading, metadata)
-                    buffer_parts, buffer_tokens = [], 0
+                    add_text_chunk(chunks, " ".join(buffer_parts), heading, metadata, page=buffer_page)
+                    buffer_parts, buffer_tokens, buffer_page = [], 0, None
                 for piece in split_oversized(element["text"], max_tokens):
-                    add_text_chunk(chunks, piece, heading, metadata)
+                    add_text_chunk(chunks, piece, heading, metadata, page=element.get("page"))
                 continue
 
             if buffer_tokens + para_tokens > max_tokens and buffer_parts:
-                add_text_chunk(chunks, " ".join(buffer_parts), heading, metadata)
-                buffer_parts, buffer_tokens = [], 0
+                add_text_chunk(chunks, " ".join(buffer_parts), heading, metadata, page=buffer_page)
+                buffer_parts, buffer_tokens, buffer_page = [], 0, None
 
+            if not buffer_parts:
+                buffer_page = element.get("page")
             buffer_parts.append(element["text"])
             buffer_tokens += para_tokens
 
         if buffer_parts:
-            add_text_chunk(chunks, " ".join(buffer_parts), heading, metadata)
+            add_text_chunk(chunks, " ".join(buffer_parts), heading, metadata, page=buffer_page)
 
     return chunks
