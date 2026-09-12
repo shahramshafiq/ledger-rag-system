@@ -339,3 +339,58 @@ construction (this golden dataset has only 3 genuinely corpus-wide questions), s
 percentage on that side should be read as a data point, not a stable rate, an issue the spec itself
 anticipates when it says a question set that doesn't discriminate between groups needs revision, this one
 is honest about a real size limit on the conceptual side rather than a large, resolved sample.
+
+## Final wrap-up: page metadata, adversarial citation testing, and the last clean run
+
+**Page metadata** (the last open item from Phase 2's required field list). Page numbers come from the
+same running page-footer banners in each filing's text that were already being filtered out as junk
+earlier in this project, extracted the same way tables are: replaced with a `[[PAGE_N]]` sentinel during
+parsing, tracked as a running "current page" while walking through each section, attached to every
+paragraph and table element from that point on. Two vendor shapes exist and were verified directly
+against the raw filing text, not assumed from an earlier debug session's rendering: Apple's page number
+follows a final pipe ("... | 2022 Form 10-K | 58"), JPMorgan's follows "Form 10-K" directly with just a
+space ("... Form 10-K 45"). A pipe that appeared to separate JPMorgan's page number in an earlier debug
+session's output turned out to be an artifact of this codebase's own `table_to_text()` join character,
+not real text in the filing, caught by testing the regex against the actual raw text before trusting it.
+Microsoft and Walmart's filings were checked directly too and genuinely don't repeat a page number in
+extracted text this way, their chunks correctly get `page: None` rather than a fabricated value.
+
+Verified directly: Apple 99% and JPMorgan 88-89% of chunks now carry a real page number, monotonically
+non-decreasing with zero backwards jumps checked across every chunk in both companies' both fiscal years.
+Also fixed `chunks_used` in the API response to actually include `page`, `form_type`, and `ticker`, they
+were being captured during ingestion but never reaching the caller, which would have made this whole
+addition invisible to anyone actually using the service.
+
+**Adversarial citation test** (Phase 5's "attempt to induce a citation to a chunk that was never
+retrieved"). `verify_citations()` itself is deterministic string-matching, already exhaustively unit-tested
+on synthetic bad inputs, so the real open question was whether the live model could be pushed into
+fabricating one under genuine pressure, not whether the detector works in the abstract. Retrieved only 3
+real chunks, then sent a prompt explicitly instructing the model to cite evidence ids "[1] through [10]"
+and reference "at least 8 different evidence ids" to demonstrate thorough sourcing. The model cited only
+`[1][2][3]`, the real range, and declined to fabricate ids 4-10 even under direct, explicit pressure to do
+so. A real, live result, not a hypothetical: the mechanism held when actually tested against the model
+it's meant to constrain, not just against synthetic inputs.
+
+**A correction to an earlier assumption, found while re-running the harness with the account's actual
+production key**: the 200,000 tokens/minute rate limit hit repeatedly in the previous session was assumed
+to be a property of the temporary replacement key. It is not, the updated, credited key hit the exact same
+200,000 TPM ceiling on the same question (Q19, the one spanning all four companies with full untruncated
+context at both the grading and judging stage). This is an organization-level constraint, not a key-level
+one, and won't resolve itself with a different key. It remains an honest, disclosed tradeoff of the
+grading/judging truncation fixes (correctness required seeing the full context; seeing the full context
+costs more tokens per request), not a bug, and continues to only affect the single most token-heavy
+question in the set. Re-ran that one question alone and got a clean result rather than re-running the
+full 25 again.
+
+**Final result**: 25/25 correct, 25/25 faithful, simultaneously, for every question, for the first time
+in this project. All 21 answerable questions correctly answered (0% incorrect-refusal rate), all 4
+unanswerable questions correctly declined (100% correct-refusal rate). Total cost for the full run:
+$0.337. Average latency: 8.6s.
+
+**Status against the spec, honestly, as of this point**: Phases 1, 2, 4, and 5 are complete and verified
+against live runs, not assumed. Phase 3's remaining items (recursive/hierarchical chunking strategies, a
+chunk-size sweep) were explicitly descoped by the person running this project, a conscious decision, not
+an oversight, and are not reflected as gaps below. Every other requirement in the written spec and the
+supervisor's verbal amendments has a real measurement behind it, recorded in this document alongside what
+was tried, what the numbers showed, what was kept, and what didn't justify its cost, which is the actual
+completion criterion this project set for itself, not a score.

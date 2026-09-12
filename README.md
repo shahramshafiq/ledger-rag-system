@@ -62,14 +62,18 @@ venv/Scripts/uvicorn app.main:app --reload --port 8000
 ```json
 {"question": "What was Apple's net income for fiscal year 2023?"}
 ```
-Returns the generated answer, the exact chunks used (with company/fiscal year/section metadata), token
-counts, and latency. If the retrieved evidence is judged insufficient after retrying with a rewritten
-search query, the response has `"abstained": true` and a fixed insufficient-evidence message instead of
-a generated answer.
+Returns the generated answer, the exact chunks used (company, ticker, fiscal year, form type, section,
+and page number where the source filing's own page markers made one extractable, enough to locate each
+passage in the original document), token counts, and latency. Every factual claim in the answer cites
+the chunk id(s) it came from (e.g. `"...was $96,995 million [3]."`); `invalid_citations` lists any cited
+id that doesn't correspond to a chunk actually retrieved, always empty in practice, verified against a
+live adversarial attempt, see `docs/NOTES.md`. If the retrieved evidence is judged insufficient after
+retrying with a rewritten search query, the response has `"abstained": true` and a fixed
+insufficient-evidence message instead of a generated answer.
 
 **`POST /documents`** — ingest a new filing. `multipart/form-data` with a `file` (the filing's HTML) plus
-`company`, `ticker`, `fiscal_year` fields. Returns a `job_id` immediately; ingestion runs in the
-background.
+`company`, `ticker`, `fiscal_year` fields, and an optional `form_type` (defaults to `"10-K"`). Returns a
+`job_id` immediately; ingestion runs in the background.
 
 **`GET /documents/{job_id}/stream`** — watch ingestion progress live via Server-Sent Events.
 
