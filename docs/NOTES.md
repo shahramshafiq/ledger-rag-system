@@ -175,7 +175,57 @@ cut for time), and testing 2-3 chunk sizes against the winning strategy. Both ar
 the written spec, made consciously, not gaps discovered late.
 
 Built since the above: the FastAPI routes (`POST /documents` with SSE ingestion progress, `POST /query`),
-manually verified end to end via Postman. Still open from Phase 5's requirements beyond the CRAG grading
-mechanism already in place: the grader currently forces itself to "sufficient" after 2 failed rewrite
-attempts rather than returning an explicit insufficient-evidence response (a real deviation from spec,
-not yet fixed), claim-level citation enforcement, and an active prompt-injection test.
+manually verified end to end via Postman.
+
+## Phase 5, part 2: abstention, citations, injection defense
+
+Built while the project's OpenAI key was out of credits (a company-issued key, a replacement was
+requested but hadn't arrived). This section is intentionally explicit about what is and isn't verified,
+since it's the one part of this project where "written and reasoned through carefully" and "confirmed
+against a real measurement" are genuinely different things, and this project's own rule is that every
+decision needs the second one, not just the first.
+
+**Abstention (fixes a real spec violation)**: `grade_node` previously forced `sufficient=True` after
+`MAX_ATTEMPTS` regardless of the actual verdict, so the graph always generated an answer, sometimes an
+"I don't know" wrapped in prose, never a real structured refusal. The spec is explicit that this is the
+wrong pattern: *"the endpoint returns an explicit insufficient-evidence response rather than a generated
+answer with a qualifier attached."* Fixed: grading now runs for real on every attempt including the
+last one, and genuinely-insufficient evidence routes to a new `abstain` node that returns
+`abstained: true` and a fixed message, without an extra generation call (abstaining costs less than
+answering, a real, positive side effect).
+
+**Claim-level citations**: every retrieved chunk gets a numeric id via `format_context`, `GENERATE_PROMPT`
+requires each factual claim to cite the id(s) it came from, and `verify_citations()` checks every cited id
+against the actual number of chunks provided, flagging anything out of range as fabricated.
+
+**Injection defense**: every chunk is wrapped in `<evidence id="N" source="...">` tags with an explicit
+instruction that evidence is data, never a command, even if a filing's own text contains something that
+reads like one. This extends DevMate's untrusted-input delimiting (previously applied to the user message
+and tool results) to this project's own untrusted input surface: the document corpus itself.
+
+**What's actually verified without the API, and what isn't:**
+- The module imports cleanly and LangGraph's own `compile()` step validates every node/edge reference in
+  the new graph shape, real, not assumed.
+- `verify_citations()` has 6 passing unit tests covering in-range, out-of-range, zero, duplicate, and
+  no-citation cases (`tests/test_citation_verification.py`).
+- The prompt-injection test's non-API half is confirmed: both synthetic injected filings
+  (`debug/prompt_injection_test.py`) parse into exactly the expected section and survive chunking,
+  including the table-cell version correctly clearing the single-row-table filter from the JPMorgan fix,
+  and the injected phrase reaches an actual stored chunk in both cases.
+- **Not verified**: whether the model actually respects the citation format in practice, whether the
+  evidence/instruction framing actually resists the injection attack (that's the entire point of running
+  `debug/prompt_injection_test.py`, which hasn't been run), and whether the abstention path behaves
+  correctly on a real question, none of this can be confirmed without a working OpenAI key. This is
+  flagged here rather than glossed over: an unverified fix is a hypothesis, not a result, on this project
+  specifically that distinction is the whole point.
+
+**Also deliberately deferred, unrelated to the key**: `pipreqs` was run to cross-check `requirements.txt`
+against actual imports. It confirmed everything already listed is genuinely used, but its raw output would
+have dropped `uvicorn`, `python-multipart`, and `pytest` (none are directly imported by this codebase,
+`uvicorn` and `pytest` run from the command line, `python-multipart` is used internally by FastAPI), and
+`pgvector` (needed to register the vector type, never imported directly). Applying it blindly would have
+broken the server, file uploads, and the test suite on a clean clone. `requirements.txt` was left as is.
+
+**First thing to do once the key is back**: run `debug/prompt_injection_test.py` and read its output
+directly, then a full clean `eval.run_harness corrective` pass to confirm nothing in this batch of changes
+regressed the 25/25 result, before trusting any of it as done.
