@@ -306,3 +306,36 @@ both attack variants, and a judge that can now actually see what it's evaluating
 live runs, not assumed. Two honestly-disclosed, understood-but-unresolved items remain: token cost on a
 rate-limited key, and inherent judge non-determinism on 1-2 genuinely ambiguous questions, neither of
 which is a logic bug in this session's changes.
+
+## Closing two remaining Phase 2/4 spec gaps
+
+**`form_type` metadata** (Phase 2 lists it alongside company/ticker/fiscal_year/section/table-flag, it was
+missing). Added as a real parameter to `ingest_filing()`, defaulting to `"10-K"` for this corpus rather
+than hardcoded, so a future filing of a different type is representable, and exposed the same way on
+`POST /documents`. Re-ingested and verified directly: all 2,892 chunks in `ledger_chunks` now carry
+`form_type="10-K"`, no gaps. This re-ingestion also incidentally cleared 150 leftover duplicate Apple
+FY2023 chunks from an earlier `/documents` test whose cleanup was never confirmed, back to exactly one
+copy of each filing.
+
+**Exact-identifier vs. purely conceptual recall (Phase 4)**: the spec wants recall@5 reported separately
+for questions containing exact identifiers (tickers, item numbers, specific figures) versus purely
+conceptual ones. Classified the 25 questions by whether they anchor to one specific company + fiscal year
+(or an explicit Item number): **Q01-Q18 (18 questions)** all do, **Q19-Q21 (3 questions)** don't, they ask
+the system to reason across the whole corpus without pointing at one company+year pair. Q22-25
+(unanswerable) are excluded from this specific comparison since recall@5 isn't a meaningful metric when
+there's no correct passage to find, consistent with how `check_recall()` already treats them.
+
+Against the last full corrective run: **exact-identifier questions, 18/18 recall@5 (100%)**. Conceptual
+questions, only 1 of 3 (Q20) had a computable recall value, Q19 and Q21's `source_document` field was
+written as the prose "all four FY2023 10-Ks" rather than the `TICKER_FYXXXX_10K + ...` format
+`check_recall()` actually parses, so recall silently came back as `None` for both, a golden-dataset
+formatting inconsistency, not a retrieval failure. Fixed both to match Q20's working format. This makes
+recall computable for all 3 conceptual questions starting with the next harness run, not retroactively for
+data already collected, re-running the full harness solely to backfill this one number wasn't judged worth
+the cost against an already rate-strained temporary key.
+
+Worth flagging honestly even once complete: a 3-question conceptual bucket is a small sample by
+construction (this golden dataset has only 3 genuinely corpus-wide questions), so any single-run
+percentage on that side should be read as a data point, not a stable rate, an issue the spec itself
+anticipates when it says a question set that doesn't discriminate between groups needs revision, this one
+is honest about a real size limit on the conceptual side rather than a large, resolved sample.
