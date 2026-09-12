@@ -6,9 +6,9 @@ from app.vectorstore.store import get_vector_store
 logger = logging.getLogger(__name__)
 
 
-def ingest_filing(html_path, company, ticker, fiscal_year, chunk_fn, collection_name="ledger_chunks"):
+def ingest_filing(html_path, company, ticker, fiscal_year, chunk_fn, form_type="10-K", collection_name="ledger_chunks"):
     sections = parse_filing(html_path)
-    metadata = {"company": company, "ticker": ticker, "fiscal_year": fiscal_year}
+    metadata = {"company": company, "ticker": ticker, "fiscal_year": fiscal_year, "form_type": form_type}
     chunks = chunk_fn(sections, metadata)
 
     if not chunks:
